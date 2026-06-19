@@ -55,7 +55,14 @@ const GHOST_FACTORS: Record<DigitalItem['type'], number> = {
 // ============================================================
 
 /**
- * Calculate Surface Carbon from direct emission activities
+ * Calculate Surface Carbon from direct emission activities.
+ * Uses IPCC AR6 and DEFRA 2023 emission factors.
+ * 
+ * @param items - Array of surface emission items with type and amount
+ * @returns Total surface carbon in kg CO₂e
+ * 
+ * @example
+ * calculateSurface([{ type: 'car_petrol', amount: 25 }]) // 5.25 kg
  */
 export function calculateSurface(items: SurfaceItem[]): number {
   if (!items || items.length === 0) return 0;

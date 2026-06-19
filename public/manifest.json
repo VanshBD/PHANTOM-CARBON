@@ -1,0 +1,26 @@
+{
+  "name": "Phantom Carbon",
+  "short_name": "Phantom CO₂",
+  "description": "71% of your carbon footprint is invisible. We make it visible.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0a0e1a",
+  "theme_color": "#22c55e",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["sustainability", "productivity", "lifestyle"],
+  "lang": "en"
+}

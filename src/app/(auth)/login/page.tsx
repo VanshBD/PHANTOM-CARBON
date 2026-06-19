@@ -95,7 +95,7 @@ export default function LoginPage() {
                 aria-describedby={errors.email ? 'email-error' : undefined}
                 aria-invalid={!!errors.email}
                 className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus-visible:ring-2 focus-visible:ring-green-500 focus:border-green-500 outline-none transition-colors"
-                placeholder="you@example.com"
+                placeholder="demo@phantom.carbon"
                 {...register('email')}
               />
               {errors.email && (
@@ -119,7 +119,7 @@ export default function LoginPage() {
                 aria-describedby={errors.password ? 'password-error' : undefined}
                 aria-invalid={!!errors.password}
                 className="w-full bg-gray-800 border border-gray-700 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus-visible:ring-2 focus-visible:ring-green-500 focus:border-green-500 outline-none transition-colors"
-                placeholder="••••••••"
+                placeholder="Demo@12345"
                 {...register('password')}
               />
               {errors.password && (

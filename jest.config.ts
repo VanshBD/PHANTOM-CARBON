@@ -8,13 +8,12 @@ const config: Config = {
       testMatch: [
         '<rootDir>/src/__tests__/services/**/*.test.ts',
         '<rootDir>/src/__tests__/api/**/*.test.ts',
+        '<rootDir>/src/__tests__/lib/**/*.test.ts',
       ],
       transform: {
         '^.+\\.tsx?$': ['ts-jest', { tsconfig: { module: 'commonjs' } }],
       },
-      moduleNameMapper: {
-        '^@/(.*)$': '<rootDir>/src/$1',
-      },
+      moduleNameMapper: { '^@/(.*)$': '<rootDir>/src/$1' },
     },
     {
       displayName: 'jsdom',
@@ -23,25 +22,20 @@ const config: Config = {
       transform: {
         '^.+\\.tsx?$': ['ts-jest', { tsconfig: { module: 'commonjs', jsx: 'react-jsx' } }],
       },
-      moduleNameMapper: {
-        '^@/(.*)$': '<rootDir>/src/$1',
-      },
+      moduleNameMapper: { '^@/(.*)$': '<rootDir>/src/$1' },
       setupFilesAfterEnv: ['<rootDir>/jest.setup.ts'],
     },
   ],
   collectCoverageFrom: [
-    'src/**/*.{ts,tsx}',
+    'src/services/**/*.ts',
+    'src/lib/**/*.ts',
+    'src/app/api/**/*.ts',
     '!src/**/*.d.ts',
-    '!src/app/layout.tsx',
-    '!src/app/globals.css',
-    '!src/__tests__/**',
+    '!src/**/__tests__/**',
   ],
+  coverageReporters: ['text', 'text-summary', 'lcov'],
   coverageThreshold: {
-    global: {
-      lines: 75,
-      functions: 75,
-      branches: 65,
-    },
+    global: { lines: 80, functions: 80, branches: 70 },
   },
 };
 

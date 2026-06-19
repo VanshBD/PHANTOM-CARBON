@@ -1,0 +1,10 @@
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /dashboard
+Disallow: /chat
+Disallow: /upload
+Disallow: /oracle
+Disallow: /community
+
+Sitemap: https://phantom-carbon.vercel.app/sitemap.xml
