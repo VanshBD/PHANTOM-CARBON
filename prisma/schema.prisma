@@ -1,0 +1,55 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mongodb"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String         @id @default(auto()) @map("_id") @db.ObjectId
+  email         String         @unique
+  name          String?
+  passwordHash  String
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  carbonLogs    CarbonLog[]
+  oracleReports OracleReport[]
+}
+
+model CarbonLog {
+  id            String    @id @default(auto()) @map("_id") @db.ObjectId
+  userId        String    @db.ObjectId
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  inputText     String
+  inputType     InputType @default(CHAT)
+  surfaceCarbon Float     @default(0)
+  shadowCarbon  Float     @default(0)
+  ghostCarbon   Float     @default(0)
+  totalCarbon   Float     @default(0)
+  breakdown     Json
+  rawAiResponse Json?
+  createdAt     DateTime  @default(now())
+
+  @@index([userId, createdAt])
+}
+
+model OracleReport {
+  id             String   @id @default(auto()) @map("_id") @db.ObjectId
+  userId         String   @db.ObjectId
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  darkFuture     String
+  possibleFuture String
+  phantomFuture  String
+  weeklyCarbon   Float
+  createdAt      DateTime @default(now())
+
+  @@index([userId])
+}
+
+enum InputType {
+  CHAT
+  RECEIPT
+  SPENDING
+}
