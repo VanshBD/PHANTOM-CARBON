@@ -1,7 +1,11 @@
 {
   "name": "phantom-carbon",
   "version": "1.0.0",
+  "description": "AI-powered invisible carbon intelligence platform — detects Surface, Shadow & Ghost emissions from natural conversation",
   "private": true,
+  "keywords": ["carbon-footprint", "sustainability", "ai", "groq", "nextjs", "climate"],
+  "author": "Phantom Carbon Team",
+  "license": "MIT",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
