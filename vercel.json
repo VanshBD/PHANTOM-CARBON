@@ -1,7 +1,3 @@
 {
-  "buildCommand": "cd phantom-carbon && npm install && npx prisma generate && npm run build",
-  "outputDirectory": "phantom-carbon/.next",
-  "installCommand": "cd phantom-carbon && npm install",
-  "framework": "nextjs",
-  "rootDirectory": "phantom-carbon"
+  "framework": "nextjs"
 }
