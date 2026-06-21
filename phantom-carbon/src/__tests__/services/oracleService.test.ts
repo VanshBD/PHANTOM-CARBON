@@ -42,6 +42,22 @@ describe('OracleService', () => {
     mockRedisSet.mockResolvedValue(undefined);
   });
 
+  it('regenerates when cached shape is invalid', async () => {
+    mockRedisGet.mockResolvedValue(JSON.stringify({ darkFuture: 'only one field' }));
+
+    const mockCreate = jest.fn().mockResolvedValue({
+      choices: [{ message: { content: MOCK_ORACLE_RESPONSE } }],
+    });
+    mockGetGroqClient.mockReturnValue({
+      chat: { completions: { create: mockCreate } },
+    } as never);
+
+    const result = await generateScenarios('user-invalid-cache', mockSummary, 'Pune', 'India');
+
+    expect(mockCreate).toHaveBeenCalledTimes(1);
+    expect(result.darkFuture).toContain('unrecognizable');
+  });
+
   it('returns cached result when available', async () => {
     const cachedScenario = JSON.stringify({
       darkFuture: 'Cached dark',

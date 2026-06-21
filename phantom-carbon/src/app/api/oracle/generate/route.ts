@@ -5,7 +5,8 @@ import { oracleGenerateSchema } from '@/lib/validators';
 import { prisma } from '@/lib/prisma';
 import { generateScenarios, getOracleCacheKey } from '@/services/oracleService';
 import { redisGet } from '@/lib/redis';
-import type { CarbonSummary, CarbonBreakdown } from '@/types';
+import { aggregateCategoryBreakdown, aggregateCarbonTotals } from '@/lib/carbonUtils';
+import type { CarbonSummary } from '@/types';
 
 const MIN_LOGS_REQUIRED = 3;
 
@@ -102,27 +103,8 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
           take: 20,
         });
 
-  const totals = sourceLogs.reduce(
-    (acc, log) => ({
-      surface: acc.surface + log.surfaceCarbon,
-      shadow: acc.shadow + log.shadowCarbon,
-      ghost: acc.ghost + log.ghostCarbon,
-      total: acc.total + log.totalCarbon,
-    }),
-    { surface: 0, shadow: 0, ghost: 0, total: 0 }
-  );
-
-  const categoryBreakdown: CarbonBreakdown = {};
-  for (const log of sourceLogs) {
-    const bd = log.breakdown as CarbonBreakdown;
-    if (!bd) continue;
-    if (bd.transport) categoryBreakdown.transport = (categoryBreakdown.transport ?? 0) + bd.transport;
-    if (bd.food) categoryBreakdown.food = (categoryBreakdown.food ?? 0) + bd.food;
-    if (bd.energy) categoryBreakdown.energy = (categoryBreakdown.energy ?? 0) + bd.energy;
-    if (bd.shopping) categoryBreakdown.shopping = (categoryBreakdown.shopping ?? 0) + bd.shopping;
-    if (bd.digital) categoryBreakdown.digital = (categoryBreakdown.digital ?? 0) + bd.digital;
-    if (bd.supplyChain) categoryBreakdown.supplyChain = (categoryBreakdown.supplyChain ?? 0) + bd.supplyChain;
-  }
+  const totals = aggregateCarbonTotals(sourceLogs);
+  const categoryBreakdown = aggregateCategoryBreakdown(sourceLogs);
 
   const summary: CarbonSummary = {
     period: '7d',

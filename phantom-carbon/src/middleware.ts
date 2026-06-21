@@ -2,21 +2,23 @@ import { auth } from '@/lib/auth';
 import { NextResponse } from 'next/server';
 
 // Routes that require authentication
-const PROTECTED_PAGES = ['/dashboard', '/chat', '/upload', '/oracle', '/community'];
+const PROTECTED_PAGES       = ['/dashboard', '/chat', '/upload', '/oracle', '/community'];
 const PROTECTED_API_PREFIXES = ['/api/carbon', '/api/oracle', '/api/community'];
+
+/** NextAuth v5 wraps the request and attaches `.auth` at runtime */
+type NextAuthRequest = Parameters<Parameters<typeof auth>[0]>[0] & {
+  auth: { user?: { id?: string; email?: string; name?: string | null } } | null;
+};
 
 export default auth(function middleware(req) {
   const { pathname } = req.nextUrl;
 
   const isProtectedPage = PROTECTED_PAGES.some((r) => pathname.startsWith(r));
-  const isProtectedApi = PROTECTED_API_PREFIXES.some((p) => pathname.startsWith(p));
+  const isProtectedApi  = PROTECTED_API_PREFIXES.some((p) => pathname.startsWith(p));
 
-  if (!isProtectedPage && !isProtectedApi) {
-    return NextResponse.next();
-  }
+  if (!isProtectedPage && !isProtectedApi) return NextResponse.next();
 
-  // In NextAuth v5, auth() middleware exposes session on req.auth
-  const session = (req as unknown as Record<string, unknown>).auth as { user?: unknown } | null;
+  const session = (req as NextAuthRequest).auth;
 
   if (!session?.user) {
     if (isProtectedApi) {

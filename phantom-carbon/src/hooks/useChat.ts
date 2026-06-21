@@ -7,6 +7,12 @@ function generateId(): string {
   return Math.random().toString(36).slice(2, 9);
 }
 
+/**
+ * Chat hook that manages message state and AI carbon extraction.
+ * Sends messages to /api/carbon/extract and updates message history.
+ *
+ * @returns \{ messages, isLoading, error, sendMessage, clearMessages \}
+ */
 export function useChat() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [isLoading, setIsLoading] = useState(false);

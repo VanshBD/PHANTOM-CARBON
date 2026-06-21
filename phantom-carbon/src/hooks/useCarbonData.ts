@@ -5,6 +5,13 @@ import type { CarbonSummary } from '@/types';
 
 type Period = '7d' | '30d' | '90d';
 
+/**
+ * Fetches the user's carbon summary for a given period.
+ * Queries /api/carbon/summary and caches result in state.
+ *
+ * @param period - Time window: '7d' | '30d' | '90d'. Defaults to '7d'
+ * @returns \{ data: CarbonSummary | null, isLoading, error, refetch \}
+ */
 export function useCarbonData(period: Period = '7d') {
   const [data, setData] = useState<CarbonSummary | null>(null);
   const [isLoading, setIsLoading] = useState(true);

@@ -42,10 +42,10 @@ export async function GET(_request: NextRequest): Promise<NextResponse> {
   const cached = await redisGet(cacheKey);
   if (cached) {
     const data = JSON.parse(cached) as { entries: LeaderboardEntry[]; updatedAt: string };
-    // Mark current user's entry
+    const cachedUserAnonymousId = generateAnonymousId(userId);
     const entries = data.entries.map((e) => ({
       ...e,
-      isCurrentUser: e.anonymousId === generateAnonymousId(userId),
+      isCurrentUser: e.anonymousId === cachedUserAnonymousId,
     }));
     return NextResponse.json({ data: { entries, updatedAt: data.updatedAt } });
   }
@@ -126,20 +126,23 @@ export async function GET(_request: NextRequest): Promise<NextResponse> {
   const updatedAt = new Date().toISOString();
   await redisSet(cacheKey, JSON.stringify({ entries, updatedAt }), CACHE_TTL);
 
+  // Compute current user's anonymous ID once — used 3 times below
+  const currentUserAnonymousId = generateAnonymousId(userId);
+
   // Check if current user is in top 20 — if not, find their rank
   const currentUserEntry = weeklyTotals.findIndex((w) => w.userId === userId);
   const enrichedEntries = entries.map((e) => ({
     ...e,
-    isCurrentUser: e.anonymousId === generateAnonymousId(userId),
+    isCurrentUser: e.anonymousId === currentUserAnonymousId,
   }));
 
-  // If current user is not in top 20, add their entry
+  // If current user is not in top 20, append their entry
   if (currentUserEntry >= 20) {
     const userWeekly = weeklyTotals[currentUserEntry];
     const weekly = userWeekly._sum.totalCarbon ?? 0;
     enrichedEntries.push({
       rank: currentUserEntry + 1,
-      anonymousId: generateAnonymousId(userId),
+      anonymousId: currentUserAnonymousId,
       weeklyTotal: Math.round(weekly * 100) / 100,
       reductionPercent: 0,
       topLayer: 'surface',

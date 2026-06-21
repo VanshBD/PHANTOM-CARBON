@@ -3,7 +3,8 @@ import { auth } from '@/lib/auth';
 import { carbonSummarySchema } from '@/lib/validators';
 import { prisma } from '@/lib/prisma';
 import { redisGet, redisSet } from '@/lib/redis';
-import type { CarbonSummary, DailyCarbon, CarbonBreakdown } from '@/types';
+import { aggregateCategoryBreakdown, aggregateCarbonTotals } from '@/lib/carbonUtils';
+import type { CarbonSummary, DailyCarbon } from '@/types';
 
 const CACHE_TTL = 300; // 5 minutes
 
@@ -76,27 +77,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json({ data: empty });
   }
 
-  const totals = logs.reduce(
-    (acc, log) => ({
-      surface: acc.surface + log.surfaceCarbon,
-      shadow:  acc.shadow  + log.shadowCarbon,
-      ghost:   acc.ghost   + log.ghostCarbon,
-      total:   acc.total   + log.totalCarbon,
-    }),
-    { surface: 0, shadow: 0, ghost: 0, total: 0 }
-  );
-
-  const categoryBreakdown: CarbonBreakdown = {};
-  for (const log of logs) {
-    const bd = log.breakdown as CarbonBreakdown | null;
-    if (!bd) continue;
-    if (bd.transport)   categoryBreakdown.transport   = (categoryBreakdown.transport   ?? 0) + bd.transport;
-    if (bd.food)        categoryBreakdown.food        = (categoryBreakdown.food        ?? 0) + bd.food;
-    if (bd.energy)      categoryBreakdown.energy      = (categoryBreakdown.energy      ?? 0) + bd.energy;
-    if (bd.shopping)    categoryBreakdown.shopping    = (categoryBreakdown.shopping    ?? 0) + bd.shopping;
-    if (bd.digital)     categoryBreakdown.digital     = (categoryBreakdown.digital     ?? 0) + bd.digital;
-    if (bd.supplyChain) categoryBreakdown.supplyChain = (categoryBreakdown.supplyChain ?? 0) + bd.supplyChain;
-  }
+  const totals = aggregateCarbonTotals(logs);
+  const categoryBreakdown = aggregateCategoryBreakdown(logs);
 
   const dailyMap = new Map<string, DailyCarbon>();
   for (const log of logs) {

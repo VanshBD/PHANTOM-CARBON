@@ -94,7 +94,15 @@ export async function generateScenarios(
   if (cached) {
     console.info(`[OracleService] Cache HIT for user ${userId}`);
     const parsed = JSON.parse(cached) as OracleScenario;
-    return parsed;
+    // Validate cached shape before returning — guards against malformed cache entries
+    if (
+      typeof parsed.darkFuture    === 'string' &&
+      typeof parsed.possibleFuture === 'string' &&
+      typeof parsed.phantomFuture  === 'string'
+    ) {
+      return parsed;
+    }
+    console.warn('[OracleService] Cached shape invalid, regenerating');
   }
 
   console.info(`[OracleService] Cache MISS — generating new oracle for user ${userId}`);

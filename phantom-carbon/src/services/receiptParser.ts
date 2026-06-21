@@ -68,43 +68,29 @@ async function callVisionModel(
   const client = getGroqClient();
 
   try {
-    // Groq vision API: content array with image_url is supported at runtime
-    // even though the SDK types only declare content as string.
-    const visionContent = JSON.stringify([
-      { type: 'text', text: RECEIPT_PROMPT },
+    // Groq SDK v0.3 types content as string; vision API accepts multimodal arrays at runtime.
+    type GroqMessages = Parameters<
+      ReturnType<typeof getGroqClient>['chat']['completions']['create']
+    >[0]['messages'];
+
+    // Vision multimodal content is supported at runtime but not in groq-sdk v0.3 types.
+    const visionMessages = [
       {
-        type: 'image_url',
-        image_url: { url: `data:${mimeType};base64,${base64}` },
+        role: 'user' as const,
+        content: [
+          { type: 'text', text: RECEIPT_PROMPT },
+          { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64}` } },
+        ],
       },
-    ]);
+    ] as unknown as GroqMessages;
 
-    // We pass the array via a workaround: create the request body manually
-    // using the Groq client's underlying fetch to bypass type restriction.
-    const groqAny = client as unknown as {
-      chat: {
-        completions: {
-          create: (body: Record<string, unknown>) => Promise<{ choices: Array<{ message: { content: string | null } }> }>;
-        };
-      };
-    };
-
-    const response = await groqAny.chat.completions.create({
+    const response = await client.chat.completions.create({
       model: modelId,
-      messages: [
-        {
-          role: 'user',
-          content: [
-            { type: 'text', text: RECEIPT_PROMPT },
-            { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64}` } },
-          ],
-        },
-      ],
+      messages: visionMessages,
       max_tokens: 1024,
       temperature: 0.1,
       response_format: { type: 'json_object' },
     });
-
-    void visionContent; // suppress unused warning
 
     const raw = response.choices[0]?.message?.content;
     if (!raw) return null;
@@ -148,6 +134,13 @@ function itemsToText(items: ReceiptItem[], storeName?: string | null): string {
   return `Receipt:\n${header}${lines.join('\n')}\n\nCalculate carbon footprint including manufacturing, packaging, transport, and lifecycle emissions.`;
 }
 
+/**
+ * Sanitize a filename by replacing non-safe characters with underscores.
+ * Prevents path traversal and file system injection via uploaded filenames.
+ *
+ * @param filename - Raw filename from the uploaded file
+ * @returns Safe filename with only alphanumeric, dots, dashes, underscores (max 255 chars)
+ */
 export function sanitizeFilename(filename: string): string {
   return filename
     .replace(/[^a-zA-Z0-9._-]/g, '_')
@@ -194,12 +187,12 @@ export async function parseReceipt(
  * Validate file MIME type via magic bytes to prevent spoofing.
  */
 export function validateMimeType(buffer: Buffer, claimedMime: string): boolean {
-  const hex = buffer.slice(0, 8).toString('hex');
+  const hex = buffer.subarray(0, 8).toString('hex');
   switch (claimedMime) {
     case 'image/jpeg':      return hex.startsWith('ffd8ff');
     case 'image/png':       return hex.startsWith('89504e47');
-    case 'image/webp':      return buffer.slice(8, 12).toString('ascii') === 'WEBP';
-    case 'application/pdf': return buffer.slice(0, 4).toString('ascii') === '%PDF';
+    case 'image/webp':      return buffer.subarray(8, 12).toString('ascii') === 'WEBP';
+    case 'application/pdf': return buffer.subarray(0, 4).toString('ascii') === '%PDF';
     default:                return false;
   }
 }

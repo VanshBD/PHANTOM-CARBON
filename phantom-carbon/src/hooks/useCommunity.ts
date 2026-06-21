@@ -8,6 +8,12 @@ interface LeaderboardData {
   updatedAt: string;
 }
 
+/**
+ * Fetches the anonymized community leaderboard.
+ * Polls /api/community/leaderboard and exposes a manual refetch function.
+ *
+ * @returns \{ data: LeaderboardData | null, isLoading, error, refetch \}
+ */
 export function useCommunity() {
   const [data, setData] = useState<LeaderboardData | null>(null);
   const [isLoading, setIsLoading] = useState(true);

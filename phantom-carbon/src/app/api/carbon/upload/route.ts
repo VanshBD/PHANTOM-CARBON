@@ -4,20 +4,13 @@ import { rateLimiters } from '@/lib/rate-limit';
 import { MAX_FILE_SIZE_BYTES } from '@/lib/validators';
 import { parseReceipt, sanitizeFilename } from '@/services/receiptParser';
 
-// All image types we can handle — broad to accept screenshots, Gemini exports, etc.
-const ACCEPTED_IMAGE_TYPES = new Set([
-  'image/jpeg', 'image/jpg', 'image/png', 'image/webp',
-  'image/heic', 'image/heif', 'image/gif', 'image/bmp',
-  'image/tiff', 'image/avif', 'image/svg+xml',
-]);
-
 /**
  * Detect actual file type from magic bytes — more reliable than browser MIME type.
  * Returns the detected MIME type or the original if unknown.
  */
 function detectMimeFromMagicBytes(buffer: Buffer, claimedMime: string): { mime: string; valid: boolean } {
-  const hex = buffer.slice(0, 12).toString('hex');
-  const str = buffer.slice(0, 4).toString('ascii');
+  const hex = buffer.subarray(0, 12).toString('hex');
+  const str = buffer.subarray(0, 4).toString('ascii');
 
   // JPEG: FFD8FF
   if (hex.startsWith('ffd8ff')) return { mime: 'image/jpeg', valid: true };
@@ -29,7 +22,7 @@ function detectMimeFromMagicBytes(buffer: Buffer, claimedMime: string): { mime: 
   if (str === '%PDF') return { mime: 'application/pdf', valid: true };
 
   // WEBP: starts with RIFF....WEBP
-  if (hex.startsWith('52494646') && buffer.slice(8, 12).toString('ascii') === 'WEBP') {
+  if (hex.startsWith('52494646') && buffer.subarray(8, 12).toString('ascii') === 'WEBP') {
     return { mime: 'image/webp', valid: true };
   }
 
@@ -37,10 +30,10 @@ function detectMimeFromMagicBytes(buffer: Buffer, claimedMime: string): { mime: 
   if (str.startsWith('GIF')) return { mime: 'image/gif', valid: true };
 
   // BMP: BM
-  if (buffer.slice(0, 2).toString('ascii') === 'BM') return { mime: 'image/bmp', valid: true };
+  if (buffer.subarray(0, 2).toString('ascii') === 'BM') return { mime: 'image/bmp', valid: true };
 
   // HEIC/HEIF: look for 'ftyp' at byte 4
-  const ftypOffset = buffer.slice(4, 8).toString('ascii');
+  const ftypOffset = buffer.subarray(4, 8).toString('ascii');
   if (ftypOffset === 'ftyp') return { mime: 'image/heic', valid: true };
 
   // Unknown — accept if claimed type looks like an image or PDF
