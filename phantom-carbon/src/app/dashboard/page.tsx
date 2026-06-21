@@ -6,6 +6,7 @@ import { GhostRadar } from '@/components/dashboard/GhostRadar';
 import { ThreeLayerChart } from '@/components/dashboard/ThreeLayerChart';
 import { LayerBreakdownCard } from '@/components/dashboard/LayerBreakdownCard';
 import { DailyScoreCard } from '@/components/dashboard/DailyScoreCard';
+import { DashboardRefresher } from '@/components/dashboard/DashboardRefresher';
 import type { Metadata } from 'next';
 import type { CarbonSummary, CarbonBreakdown, DailyCarbon } from '@/types';
 
@@ -128,10 +129,15 @@ export default async function DashboardPage() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
 
           <div className="mb-8">
-            <h1 className="text-2xl font-bold text-white">Carbon Dashboard</h1>
-            <p className="text-gray-500 mt-1">
-              Your full three-layer carbon footprint — past 7 days
-            </p>
+            <div className="flex items-center justify-between">
+              <div>
+                <h1 className="text-2xl font-bold text-white">Carbon Dashboard</h1>
+                <p className="text-gray-500 mt-1">
+                  Your full three-layer carbon footprint — past 7 days
+                </p>
+              </div>
+              <DashboardRefresher intervalSeconds={30} />
+            </div>
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
