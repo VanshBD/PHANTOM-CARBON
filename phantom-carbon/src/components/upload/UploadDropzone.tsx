@@ -6,18 +6,24 @@ import { useDropzone, type FileRejection } from 'react-dropzone';
 interface UploadDropzoneProps {
   onUpload: (_file: File) => void;
   isUploading?: boolean;
+  loadingLabel?: string;
 }
 
 const ACCEPTED_TYPES = {
   'application/pdf': ['.pdf'],
-  'image/jpeg': ['.jpg', '.jpeg'],
-  'image/png': ['.png'],
-  'image/webp': ['.webp'],
+  'image/jpeg':  ['.jpg', '.jpeg'],
+  'image/png':   ['.png'],
+  'image/webp':  ['.webp'],
+  'image/heic':  ['.heic'],
+  'image/heif':  ['.heif'],
+  'image/gif':   ['.gif'],
+  'image/bmp':   ['.bmp'],
+  'image/avif':  ['.avif'],
 };
 
 const MAX_SIZE = 5 * 1024 * 1024; // 5MB
 
-export function UploadDropzone({ onUpload, isUploading = false }: UploadDropzoneProps) {
+export function UploadDropzone({ onUpload, isUploading = false, loadingLabel = 'Analyzing receipt…' }: UploadDropzoneProps) {
   const [fileError, setFileError] = useState<string | null>(null);
 
   const onDrop = useCallback(
@@ -108,10 +114,10 @@ export function UploadDropzone({ onUpload, isUploading = false }: UploadDropzone
             <div
               className="flex items-center gap-2 text-green-400 text-sm"
               aria-live="polite"
-              aria-label="Uploading and analyzing receipt"
+              aria-label={loadingLabel}
             >
               <span className="w-4 h-4 border-2 border-green-400/30 border-t-green-400 rounded-full animate-spin" aria-hidden="true" />
-              Analyzing receipt…
+              {loadingLabel}
             </div>
           )}
         </div>
@@ -131,11 +137,8 @@ export function UploadDropzone({ onUpload, isUploading = false }: UploadDropzone
 
       {/* Accepted formats info */}
       <div className="mt-4 flex flex-wrap gap-2 justify-center" aria-label="Accepted file formats">
-        {['PDF', 'JPEG', 'PNG', 'WEBP'].map((fmt) => (
-          <span
-            key={fmt}
-            className="text-xs bg-gray-800 text-gray-500 border border-gray-700 rounded px-2 py-1"
-          >
+        {['PDF', 'JPEG', 'PNG', 'WEBP', 'HEIC', 'BMP'].map((fmt) => (
+          <span key={fmt} className="text-xs bg-gray-800 text-gray-500 border border-gray-700 rounded px-2 py-1">
             .{fmt.toLowerCase()}
           </span>
         ))}

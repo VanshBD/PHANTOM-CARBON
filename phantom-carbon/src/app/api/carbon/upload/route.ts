@@ -1,32 +1,75 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { rateLimiters } from '@/lib/rate-limit';
-import { validateFileUpload, ALLOWED_MIME_TYPES, MAX_FILE_SIZE_BYTES } from '@/lib/validators';
-import { parseReceipt, validateMimeType, sanitizeFilename } from '@/services/receiptParser';
-import { prisma } from '@/lib/prisma';
+import { MAX_FILE_SIZE_BYTES } from '@/lib/validators';
+import { parseReceipt, sanitizeFilename } from '@/services/receiptParser';
 
+// All image types we can handle — broad to accept screenshots, Gemini exports, etc.
+const ACCEPTED_IMAGE_TYPES = new Set([
+  'image/jpeg', 'image/jpg', 'image/png', 'image/webp',
+  'image/heic', 'image/heif', 'image/gif', 'image/bmp',
+  'image/tiff', 'image/avif', 'image/svg+xml',
+]);
+
+/**
+ * Detect actual file type from magic bytes — more reliable than browser MIME type.
+ * Returns the detected MIME type or the original if unknown.
+ */
+function detectMimeFromMagicBytes(buffer: Buffer, claimedMime: string): { mime: string; valid: boolean } {
+  const hex = buffer.slice(0, 12).toString('hex');
+  const str = buffer.slice(0, 4).toString('ascii');
+
+  // JPEG: FFD8FF
+  if (hex.startsWith('ffd8ff')) return { mime: 'image/jpeg', valid: true };
+
+  // PNG: 89504E47
+  if (hex.startsWith('89504e47')) return { mime: 'image/png', valid: true };
+
+  // PDF: %PDF
+  if (str === '%PDF') return { mime: 'application/pdf', valid: true };
+
+  // WEBP: starts with RIFF....WEBP
+  if (hex.startsWith('52494646') && buffer.slice(8, 12).toString('ascii') === 'WEBP') {
+    return { mime: 'image/webp', valid: true };
+  }
+
+  // GIF: GIF87a or GIF89a
+  if (str.startsWith('GIF')) return { mime: 'image/gif', valid: true };
+
+  // BMP: BM
+  if (buffer.slice(0, 2).toString('ascii') === 'BM') return { mime: 'image/bmp', valid: true };
+
+  // HEIC/HEIF: look for 'ftyp' at byte 4
+  const ftypOffset = buffer.slice(4, 8).toString('ascii');
+  if (ftypOffset === 'ftyp') return { mime: 'image/heic', valid: true };
+
+  // Unknown — accept if claimed type looks like an image or PDF
+  const isImageOrPdf = claimedMime.startsWith('image/') || claimedMime === 'application/pdf';
+  return { mime: claimedMime, valid: isImageOrPdf };
+}
+
+/**
+ * POST /api/carbon/upload
+ * Analyzes a receipt image/PDF with Groq vision AI.
+ * Does NOT save to DB — user reviews result and confirms via /api/carbon/save.
+ */
 export async function POST(request: NextRequest): Promise<NextResponse> {
-  // 1. Authentication
+  // Auth
   const session = await auth();
   if (!session?.user?.id) {
     return NextResponse.json({ error: 'Authentication required' }, { status: 401 });
   }
 
-  const userId = session.user.id;
-
-  // 2. Rate limiting (stricter for uploads — 5/min)
-  const rateLimitResult = await rateLimiters.carbonUpload(userId);
+  // Rate limiting
+  const rateLimitResult = await rateLimiters.carbonUpload(session.user.id);
   if (!rateLimitResult.allowed) {
     return NextResponse.json(
       { error: 'Upload rate limit exceeded. Please wait before uploading again.' },
-      {
-        status: 429,
-        headers: { 'Retry-After': String(rateLimitResult.retryAfter ?? 60) },
-      }
+      { status: 429, headers: { 'Retry-After': String(rateLimitResult.retryAfter ?? 60) } }
     );
   }
 
-  // 3. Parse multipart form data
+  // Parse multipart form
   let formData: FormData;
   try {
     formData = await request.formData();
@@ -36,83 +79,59 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   const file = formData.get('file') as File | null;
   if (!file) {
-    return NextResponse.json(
-      { error: 'No file provided. Send a file in the "file" field.' },
-      { status: 400 }
-    );
+    return NextResponse.json({ error: 'No file provided. Send a file in the "file" field.' }, { status: 400 });
   }
 
-  // 4. Validate file metadata
-  const metaValidation = validateFileUpload({ type: file.type, size: file.size });
-  if (!metaValidation.valid) {
-    return NextResponse.json({ error: metaValidation.error }, { status: 400 });
-  }
-
-  // Additional explicit checks for security
-  if (!ALLOWED_MIME_TYPES.includes(file.type as (typeof ALLOWED_MIME_TYPES)[number])) {
-    return NextResponse.json(
-      { error: 'File type not allowed. Upload PDF, JPEG, PNG, or WEBP only.' },
-      { status: 400 }
-    );
-  }
-
+  // Size check (5MB hard limit)
   if (file.size > MAX_FILE_SIZE_BYTES) {
-    return NextResponse.json({ error: 'File exceeds 5MB size limit.' }, { status: 400 });
+    return NextResponse.json({ error: 'File too large. Maximum 5MB. Use a smaller image or compress it.' }, { status: 400 });
   }
 
-  // 5. Read buffer and validate MIME type via magic bytes
-  const arrayBuffer = await file.arrayBuffer();
-  const buffer = Buffer.from(arrayBuffer);
+  // Read buffer
+  const buffer = Buffer.from(await file.arrayBuffer()) as Buffer;
 
-  const mimeValid = validateMimeType(buffer, file.type);
-  if (!mimeValid) {
+  // Detect actual type from magic bytes — authoritative, ignores browser MIME claims
+  const { mime: detectedMime, valid } = detectMimeFromMagicBytes(buffer, file.type || 'image/jpeg');
+
+  if (!valid) {
     return NextResponse.json(
-      { error: 'File content does not match claimed type. Upload rejected.' },
+      { error: 'File is not a valid image or PDF. Please upload a JPEG, PNG, WEBP, or PDF receipt.' },
       { status: 400 }
     );
   }
 
-  // 6. Parse and analyze receipt
-  try {
-    const sanitizedName = sanitizeFilename(file.name);
-    const result = await parseReceipt(buffer, file.type, sanitizedName);
+  // For non-standard image types (HEIC, etc.) convert to JPEG using sharp
+  let processBuffer = buffer;
+  let processMime   = detectedMime;
 
-    // 7. Save to CarbonLog
-    const carbonLog = await prisma.carbonLog.create({
-      data: {
-        userId,
-        inputText: `Receipt upload: ${sanitizedName}`,
-        inputType: 'RECEIPT',
-        surfaceCarbon: result.extraction.surfaceCarbon,
-        shadowCarbon: result.extraction.shadowCarbon,
-        ghostCarbon: result.extraction.ghostCarbon,
-        totalCarbon: result.extraction.totalCarbon,
-        breakdown: result.extraction.breakdown as object,
-        rawAiResponse: JSON.parse(JSON.stringify({
-          items: result.items,
-          confidence: result.extraction.confidence,
-          sources: result.extraction.sources,
-          rawText: result.rawText ? result.rawText.slice(0, 500) : undefined,
-        })),
-      },
-      select: { id: true, createdAt: true },
-    });
+  if (!['image/jpeg', 'image/png', 'image/webp', 'application/pdf'].includes(detectedMime)) {
+    try {
+      const sharp      = (await import('sharp')).default;
+      processBuffer    = await sharp(buffer).jpeg({ quality: 80 }).toBuffer();
+      processMime      = 'image/jpeg';
+      console.info(`[Upload] Converted ${detectedMime} → JPEG (${(processBuffer.length / 1024).toFixed(0)}KB)`);
+    } catch {
+      // sharp failed — try sending as-is, let the vision model handle it
+      console.warn(`[Upload] Could not convert ${detectedMime}, sending original`);
+    }
+  }
+
+  // Analyze — DO NOT save to DB yet
+  try {
+    const sanitizedName = sanitizeFilename(file.name || 'receipt.jpg');
+    const result = await parseReceipt(processBuffer, processMime, sanitizedName);
 
     return NextResponse.json({
       data: {
-        logId: carbonLog.id,
         extraction: result.extraction,
-        items: result.items,
+        items:      result.items,
         confidence: result.extraction.confidence,
-        savedAt: carbonLog.createdAt,
+        fileName:   sanitizedName,
       },
-      message: 'Receipt analyzed successfully',
+      message: 'Receipt analyzed. Review and save to your carbon log.',
     });
   } catch (err) {
     console.error('[API/carbon/upload] Error:', err);
-    return NextResponse.json(
-      { error: 'Failed to analyze receipt. Please try again.' },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: 'Failed to analyze receipt. Please try again.' }, { status: 500 });
   }
 }
