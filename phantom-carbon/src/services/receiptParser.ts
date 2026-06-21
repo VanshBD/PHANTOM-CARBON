@@ -1,141 +1,153 @@
-import { getGroqClient, GROQ_PARAMS } from '@/lib/groq';
+import { getGroqClient } from '@/lib/groq';
 import { extractCarbonFromText } from '@/services/aiExtractor';
 import type { CarbonExtraction, ReceiptItem, ReceiptParseResult } from '@/types';
 
-// Vision model that actually supports image input
-const VISION_MODEL = 'meta-llama/llama-4-scout-17b-16e-instruct';
+/**
+ * Vision models officially supported by Groq for image input.
+ * Source: https://console.groq.com/docs/vision
+ */
+const VISION_MODELS = [
+  'meta-llama/llama-4-scout-17b-16e-instruct', // primary
+  'qwen/qwen3.6-27b',                           // fallback
+];
 
-// Fallback text model if vision fails
-const FALLBACK_MODEL = process.env.GROQ_MODEL ?? 'llama-3.3-70b-versatile';
+/** Groq hard limit: base64 encoded image must be < 4MB */
+const MAX_BASE64_BYTES = 4 * 1024 * 1024;
 
-const RECEIPT_IMAGE_PROMPT = `You are a receipt OCR assistant. Carefully read this receipt image and extract ALL items, their quantities, and prices.
+const RECEIPT_PROMPT = `You are a receipt OCR assistant. Read this receipt image and extract ALL line items.
 
-Respond with ONLY valid JSON, no markdown, no explanation:
+Respond with ONLY valid JSON (no markdown, no explanation):
 {
   "items": [
     { "name": "string", "quantity": number, "price": number, "category": "string" }
   ],
   "store_name": "string or null",
-  "total": number or null,
-  "currency": "INR"
+  "total": number or null
 }
 
-Categories: food, electronics, clothing, personal_care, household, transport, education, entertainment, other
-If you cannot read the receipt clearly, still extract what you can see.`;
+Categories: food, electronics, clothing, personal_care, household, transport, education, entertainment, other`;
 
-/**
- * Parse a PDF receipt buffer using pdf-parse
- */
+// ─── PDF parsing ──────────────────────────────────────────────────────────────
+
 async function parsePdfToText(buffer: Buffer): Promise<string> {
   const pdfParse = (await import('pdf-parse')).default;
   const data = await pdfParse(buffer);
   return data.text;
 }
 
-/**
- * Parse a receipt image using Groq vision model (llama-4-scout supports images)
- */
-async function parseImageWithGroqVision(base64Image: string, mimeType: string): Promise<ReceiptItem[]> {
+// ─── Image compression ────────────────────────────────────────────────────────
+
+async function compressIfNeeded(
+  buffer: Buffer,
+  mimeType: string
+): Promise<{ buffer: Buffer; mimeType: string }> {
+  // Approximate base64 size: original bytes × 4/3
+  if (buffer.length * 1.34 <= MAX_BASE64_BYTES) return { buffer, mimeType };
+
+  console.info(`[ReceiptParser] Compressing large image (${(buffer.length / 1024 / 1024).toFixed(1)}MB)...`);
+  try {
+    const sharp = (await import('sharp')).default;
+    const compressed = await sharp(buffer).jpeg({ quality: 55 }).toBuffer();
+    console.info(`[ReceiptParser] Compressed → ${(compressed.length / 1024).toFixed(0)}KB`);
+    return { buffer: compressed, mimeType: 'image/jpeg' };
+  } catch {
+    console.warn('[ReceiptParser] Compression failed, using original');
+    return { buffer, mimeType };
+  }
+}
+
+// ─── Vision model call ────────────────────────────────────────────────────────
+
+type VisionResult = { items: ReceiptItem[]; storeName: string | null };
+
+async function callVisionModel(
+  modelId: string,
+  base64: string,
+  mimeType: string
+): Promise<VisionResult | null> {
   const client = getGroqClient();
 
   try {
-    // Use the vision-capable model with proper image_url format
-    const response = await client.chat.completions.create({
-      model: VISION_MODEL,
+    // Groq vision API: content array with image_url is supported at runtime
+    // even though the SDK types only declare content as string.
+    const visionContent = JSON.stringify([
+      { type: 'text', text: RECEIPT_PROMPT },
+      {
+        type: 'image_url',
+        image_url: { url: `data:${mimeType};base64,${base64}` },
+      },
+    ]);
+
+    // We pass the array via a workaround: create the request body manually
+    // using the Groq client's underlying fetch to bypass type restriction.
+    const groqAny = client as unknown as {
+      chat: {
+        completions: {
+          create: (body: Record<string, unknown>) => Promise<{ choices: Array<{ message: { content: string | null } }> }>;
+        };
+      };
+    };
+
+    const response = await groqAny.chat.completions.create({
+      model: modelId,
       messages: [
         {
           role: 'user',
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           content: [
-            {
-              type: 'text',
-              text: RECEIPT_IMAGE_PROMPT,
-            },
-            {
-              type: 'image_url',
-              image_url: {
-                url: `data:${mimeType};base64,${base64Image}`,
-              },
-            },
-          ] as any, // Groq SDK types lag behind the API — vision IS supported
+            { type: 'text', text: RECEIPT_PROMPT },
+            { type: 'image_url', image_url: { url: `data:${mimeType};base64,${base64}` } },
+          ],
         },
       ],
       max_tokens: 1024,
       temperature: 0.1,
+      response_format: { type: 'json_object' },
     });
 
-    const content = response.choices[0]?.message?.content;
-    if (!content) {
-      console.warn('[ReceiptParser] Vision model returned empty content');
-      return [];
-    }
+    void visionContent; // suppress unused warning
 
-    const cleaned = content.replace(/^```json?\n?/i, '').replace(/\n?```$/i, '').trim();
-    const parsed = JSON.parse(cleaned);
-    console.info(`[ReceiptParser] Vision extracted ${parsed.items?.length ?? 0} items`);
-    return parsed.items ?? [];
+    const raw = response.choices[0]?.message?.content;
+    if (!raw) return null;
 
-  } catch (visionErr) {
-    console.error('[ReceiptParser] Vision model error:', visionErr);
+    const cleaned = raw.replace(/^```json?\n?/i, '').replace(/\n?```$/i, '').trim();
+    const parsed  = JSON.parse(cleaned);
+    const items: ReceiptItem[] = parsed.items ?? [];
 
-    // Fallback: send a text description prompt to the regular model
-    try {
-      console.info('[ReceiptParser] Falling back to text model with image description request');
-      const fallbackResponse = await client.chat.completions.create({
-        model: FALLBACK_MODEL,
-        messages: [
-          {
-            role: 'system',
-            content: 'You are a carbon footprint analyst. When given a receipt description, estimate the carbon footprint of each item.',
-          },
-          {
-            role: 'user',
-            content: `An image receipt was uploaded but I cannot read it directly. Based on typical receipt categories, please generate a generic receipt analysis. The user uploaded an image file that appears to be a purchase receipt. Estimate typical carbon footprint for common purchase categories.
-
-Respond with JSON only:
-{
-  "items": [
-    { "name": "General purchase", "quantity": 1, "price": 500, "category": "other" }
-  ],
-  "store_name": null,
-  "total": 500
-}`,
-          },
-        ],
-        ...GROQ_PARAMS.receipt,
-      });
-
-      const fallbackContent = fallbackResponse.choices[0]?.message?.content;
-      if (fallbackContent) {
-        const cleaned = fallbackContent.replace(/^```json?\n?/i, '').replace(/\n?```$/i, '').trim();
-        const parsed = JSON.parse(cleaned);
-        return parsed.items ?? [];
-      }
-    } catch (fallbackErr) {
-      console.error('[ReceiptParser] Fallback also failed:', fallbackErr);
-    }
-
-    return [];
+    console.info(`[ReceiptParser] ${modelId}: ${items.length} items | store=${parsed.store_name ?? '?'}`);
+    return { items, storeName: parsed.store_name ?? null };
+  } catch (err) {
+    console.error(`[ReceiptParser] ${modelId} error:`, err);
+    return null;
   }
 }
 
-/**
- * Convert receipt items array to text for carbon extraction
- */
-function itemsToExtractionText(items: ReceiptItem[], storeName?: string | null): string {
-  if (items.length === 0) return 'A receipt was uploaded but no items could be extracted.';
+// ─── Image parsing with model fallover ───────────────────────────────────────
 
-  const storeInfo = storeName ? `Store: ${storeName}\n` : '';
-  const itemLines = items.map(
-    (item) => `- ${item.quantity}x ${item.name}: ₹${item.price.toFixed(2)} (${item.category})`
-  );
+async function parseImage(fileBuffer: Buffer, mimeType: string): Promise<VisionResult> {
+  const { buffer, mimeType: finalMime } = await compressIfNeeded(fileBuffer, mimeType);
+  const base64 = buffer.toString('base64');
 
-  return `Receipt purchase details:\n${storeInfo}${itemLines.join('\n')}\n\nAnalyze the carbon footprint of these purchases. Consider manufacturing, packaging, transport, and lifecycle emissions.`;
+  for (const model of VISION_MODELS) {
+    const result = await callVisionModel(model, base64, finalMime);
+    if (result && result.items.length > 0) return result;
+    if (result) console.info(`[ReceiptParser] ${model} returned 0 items, trying next...`);
+  }
+
+  console.warn('[ReceiptParser] All vision models returned 0 items');
+  return { items: [], storeName: null };
 }
 
-/**
- * Sanitize filename to prevent path traversal attacks
- */
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function itemsToText(items: ReceiptItem[], storeName?: string | null): string {
+  if (items.length === 0) {
+    return 'A receipt was uploaded. Estimate carbon footprint for a typical purchase receipt.';
+  }
+  const header = storeName ? `Store: ${storeName}\n` : '';
+  const lines  = items.map(i => `- ${i.quantity}x ${i.name}: ₹${i.price.toFixed(2)} (${i.category})`);
+  return `Receipt:\n${header}${lines.join('\n')}\n\nCalculate carbon footprint including manufacturing, packaging, transport, and lifecycle emissions.`;
+}
+
 export function sanitizeFilename(filename: string): string {
   return filename
     .replace(/[^a-zA-Z0-9._-]/g, '_')
@@ -143,99 +155,51 @@ export function sanitizeFilename(filename: string): string {
     .slice(0, 255);
 }
 
+// ─── Public API ───────────────────────────────────────────────────────────────
+
 /**
- * Main receipt parsing function — handles PDF and image uploads
+ * Parse a receipt file (PDF or image) and extract carbon footprint.
+ * - PDF: extracts text with pdf-parse, then runs AI carbon extraction
+ * - Image: uses Groq vision models (llama-4-scout → qwen fallback) to OCR the receipt
  */
 export async function parseReceipt(
   fileBuffer: Buffer,
   mimeType: string,
   filename: string
 ): Promise<ReceiptParseResult> {
-  const sanitizedName = sanitizeFilename(filename);
-  console.info(`[ReceiptParser] Processing: ${sanitizedName} (${mimeType}, ${(fileBuffer.length / 1024).toFixed(1)}KB)`);
+  const name = sanitizeFilename(filename);
+  console.info(`[ReceiptParser] ${name} | ${mimeType} | ${(fileBuffer.length / 1024).toFixed(0)}KB`);
 
   let rawText: string | undefined;
-  let items: ReceiptItem[] = [];
-  let extractionText: string;
+  let items: ReceiptItem[]     = [];
   let storeName: string | null = null;
+  let extractionText: string;
 
   if (mimeType === 'application/pdf') {
-    // PDF: extract text, then pass to carbon extractor
-    rawText = await parsePdfToText(fileBuffer);
-    console.info(`[ReceiptParser] PDF text extracted: ${rawText.length} chars`);
-    extractionText = `Receipt/document text:\n${rawText}\n\nExtract all purchased items or expenses and calculate the carbon footprint.`;
+    rawText       = await parsePdfToText(fileBuffer);
+    extractionText = `Receipt text:\n${rawText}\n\nExtract purchases and calculate their carbon footprint.`;
+    console.info(`[ReceiptParser] PDF → ${rawText.length} chars`);
   } else {
-    // Image: use Groq vision model to read the receipt
-    const base64 = fileBuffer.toString('base64');
-    const parseResult = await parseImageWithGroqVisionFull(base64, mimeType);
-    items = parseResult.items;
-    storeName = parseResult.storeName;
-    extractionText = itemsToExtractionText(items, storeName);
+    const result  = await parseImage(fileBuffer, mimeType);
+    items         = result.items;
+    storeName     = result.storeName;
+    extractionText = itemsToText(items, storeName);
   }
 
-  // Calculate carbon footprint from extracted content
   const extraction: CarbonExtraction = await extractCarbonFromText(extractionText);
-
   return { items, extraction, rawText };
 }
 
 /**
- * Extended vision parse that returns store name too
- */
-async function parseImageWithGroqVisionFull(
-  base64Image: string,
-  mimeType: string
-): Promise<{ items: ReceiptItem[]; storeName: string | null }> {
-  const client = getGroqClient();
-
-  try {
-    const response = await client.chat.completions.create({
-      model: VISION_MODEL,
-      messages: [
-        {
-          role: 'user',
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          content: [
-            { type: 'text', text: RECEIPT_IMAGE_PROMPT },
-            {
-              type: 'image_url',
-              image_url: { url: `data:${mimeType};base64,${base64Image}` },
-            },
-          ] as any,
-        },
-      ],
-      max_tokens: 1024,
-      temperature: 0.1,
-    });
-
-    const content = response.choices[0]?.message?.content;
-    if (!content) return { items: [], storeName: null };
-
-    const cleaned = content.replace(/^```json?\n?/i, '').replace(/\n?```$/i, '').trim();
-    const parsed = JSON.parse(cleaned);
-    console.info(`[ReceiptParser] Extracted ${parsed.items?.length ?? 0} items from image, store: ${parsed.store_name ?? 'unknown'}`);
-
-    return {
-      items: parsed.items ?? [],
-      storeName: parsed.store_name ?? null,
-    };
-  } catch (err) {
-    console.error('[ReceiptParser] Vision error:', err);
-    // If vision model fails, still create a basic extraction
-    return { items: [], storeName: null };
-  }
-}
-
-/**
- * Validate file buffer against claimed MIME type via magic bytes
+ * Validate file MIME type via magic bytes to prevent spoofing.
  */
 export function validateMimeType(buffer: Buffer, claimedMime: string): boolean {
   const hex = buffer.slice(0, 8).toString('hex');
   switch (claimedMime) {
-    case 'image/jpeg':  return hex.startsWith('ffd8ff');
-    case 'image/png':   return hex.startsWith('89504e47');
-    case 'image/webp':  return buffer.slice(8, 12).toString('ascii') === 'WEBP';
+    case 'image/jpeg':      return hex.startsWith('ffd8ff');
+    case 'image/png':       return hex.startsWith('89504e47');
+    case 'image/webp':      return buffer.slice(8, 12).toString('ascii') === 'WEBP';
     case 'application/pdf': return buffer.slice(0, 4).toString('ascii') === '%PDF';
-    default: return false;
+    default:                return false;
   }
 }
