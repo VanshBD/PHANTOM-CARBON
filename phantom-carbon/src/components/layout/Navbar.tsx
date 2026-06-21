@@ -70,7 +70,7 @@ export function Navbar({ userName }: NavbarProps) {
             </span>
           )}
           <button
-            onClick={() => signOut({ callbackUrl: '/' })}
+            onClick={() => signOut({ callbackUrl: `${window.location.origin}/` })}
             className="text-sm text-gray-500 hover:text-white border border-gray-700 hover:border-gray-600 rounded-lg px-3 py-1.5 transition-colors focus-visible:ring-2 focus-visible:ring-green-500"
             aria-label="Sign out of Phantom Carbon"
           >
