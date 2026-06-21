@@ -74,6 +74,8 @@ export function UploadDropzone({ onUpload, isUploading = false, loadingLabel = '
         role="button"
         aria-label="Upload receipt — click to browse or drag and drop a PDF, JPEG, PNG, or WEBP file"
         aria-describedby="dropzone-description"
+        aria-invalid={fileError ? true : undefined}
+        aria-errormessage={fileError ? 'dropzone-error' : undefined}
         tabIndex={0}
       >
         <input
@@ -126,6 +128,7 @@ export function UploadDropzone({ onUpload, isUploading = false, loadingLabel = '
       {/* Error */}
       {fileError && (
         <p
+          id="dropzone-error"
           className="mt-3 text-sm text-red-400 flex items-center gap-2"
           role="alert"
           aria-live="assertive"

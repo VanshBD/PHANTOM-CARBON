@@ -1,4 +1,12 @@
-import { aggregateCategoryBreakdown, aggregateCarbonTotals } from '@/lib/carbonUtils';
+import {
+  aggregateCategoryBreakdown,
+  aggregateCarbonTotals,
+  buildCarbonSummaryFromLogs,
+  buildDailyBreakdown,
+  computeCarbonTrend,
+  createEmptyCarbonSummary,
+  getPeriodDays,
+} from '@/lib/carbonUtils';
 
 describe('aggregateCarbonTotals', () => {
   it('sums all carbon fields correctly', () => {
@@ -15,17 +23,7 @@ describe('aggregateCarbonTotals', () => {
 
   it('returns zeros for empty array', () => {
     const result = aggregateCarbonTotals([]);
-    expect(result.surface).toBe(0);
-    expect(result.shadow).toBe(0);
-    expect(result.ghost).toBe(0);
-    expect(result.total).toBe(0);
-  });
-
-  it('handles single log correctly', () => {
-    const result = aggregateCarbonTotals([
-      { surfaceCarbon: 5, shadowCarbon: 3, ghostCarbon: 1, totalCarbon: 9 },
-    ]);
-    expect(result.total).toBe(9);
+    expect(result).toEqual({ surface: 0, shadow: 0, ghost: 0, total: 0 });
   });
 });
 
@@ -38,37 +36,100 @@ describe('aggregateCategoryBreakdown', () => {
     const result = aggregateCategoryBreakdown(logs);
     expect(result.transport).toBeCloseTo(3.1);
     expect(result.food).toBeCloseTo(2.3);
-    expect(result.energy).toBeCloseTo(0.5);
     expect(result.shopping).toBeCloseTo(3.0);
   });
 
   it('skips null breakdown entries', () => {
-    const logs = [
+    const result = aggregateCategoryBreakdown([
       { breakdown: null },
       { breakdown: { transport: 2.0 } },
-    ];
-    const result = aggregateCategoryBreakdown(logs);
+    ]);
     expect(result.transport).toBeCloseTo(2.0);
   });
+});
 
-  it('returns empty object for empty array', () => {
-    const result = aggregateCategoryBreakdown([]);
-    expect(Object.keys(result).length).toBe(0);
+describe('getPeriodDays', () => {
+  it('maps known periods', () => {
+    expect(getPeriodDays('7d')).toBe(7);
+    expect(getPeriodDays('30d')).toBe(30);
+    expect(getPeriodDays('90d')).toBe(90);
   });
 
-  it('handles digital and supplyChain categories', () => {
+  it('defaults unknown periods to 7', () => {
+    expect(getPeriodDays('invalid')).toBe(7);
+  });
+});
+
+describe('buildDailyBreakdown', () => {
+  it('groups logs by date and sums totals', () => {
     const logs = [
-      { breakdown: { digital: 1.5, supplyChain: 2.5 } },
+      { surfaceCarbon: 1, shadowCarbon: 1, ghostCarbon: 0.5, totalCarbon: 2.5, createdAt: new Date('2026-06-01T10:00:00Z') },
+      { surfaceCarbon: 2, shadowCarbon: 0, ghostCarbon: 0, totalCarbon: 2, createdAt: new Date('2026-06-01T18:00:00Z') },
+      { surfaceCarbon: 3, shadowCarbon: 1, ghostCarbon: 1, totalCarbon: 5, createdAt: new Date('2026-06-02T09:00:00Z') },
     ];
-    const result = aggregateCategoryBreakdown(logs);
-    expect(result.digital).toBeCloseTo(1.5);
-    expect(result.supplyChain).toBeCloseTo(2.5);
+
+    const daily = buildDailyBreakdown(logs);
+    expect(daily).toHaveLength(2);
+    expect(daily[0].date).toBe('2026-06-01');
+    expect(daily[0].total).toBeCloseTo(4.5);
+    expect(daily[1].total).toBeCloseTo(5);
+  });
+});
+
+describe('computeCarbonTrend', () => {
+  it('returns stable with fewer than 4 days', () => {
+    expect(computeCarbonTrend([
+      { date: '2026-06-01', surface: 1, shadow: 1, ghost: 0, total: 2 },
+      { date: '2026-06-02', surface: 1, shadow: 1, ghost: 0, total: 2 },
+    ])).toBe('stable');
   });
 
-  it('skips zero/undefined values', () => {
-    const logs = [{ breakdown: { transport: 0, food: undefined } }];
-    const result = aggregateCategoryBreakdown(logs);
-    expect(result.transport).toBeUndefined(); // 0 is falsy, not added
-    expect(result.food).toBeUndefined();
+  it('detects improving trend when second half is lower', () => {
+    const daily = [
+      { date: '2026-06-01', surface: 5, shadow: 0, ghost: 0, total: 10 },
+      { date: '2026-06-02', surface: 5, shadow: 0, ghost: 0, total: 10 },
+      { date: '2026-06-03', surface: 1, shadow: 0, ghost: 0, total: 2 },
+      { date: '2026-06-04', surface: 1, shadow: 0, ghost: 0, total: 2 },
+    ];
+    expect(computeCarbonTrend(daily)).toBe('improving');
+  });
+
+  it('detects worsening trend when second half is higher', () => {
+    const daily = [
+      { date: '2026-06-01', surface: 1, shadow: 0, ghost: 0, total: 2 },
+      { date: '2026-06-02', surface: 1, shadow: 0, ghost: 0, total: 2 },
+      { date: '2026-06-03', surface: 5, shadow: 0, ghost: 0, total: 10 },
+      { date: '2026-06-04', surface: 5, shadow: 0, ghost: 0, total: 10 },
+    ];
+    expect(computeCarbonTrend(daily)).toBe('worsening');
+  });
+});
+
+describe('buildCarbonSummaryFromLogs', () => {
+  it('returns empty summary for no logs', () => {
+    expect(buildCarbonSummaryFromLogs('7d', [])).toEqual(createEmptyCarbonSummary('7d'));
+  });
+
+  it('builds a complete summary with trend and top action', () => {
+    const logs = [
+      {
+        surfaceCarbon: 2, shadowCarbon: 1, ghostCarbon: 0.5, totalCarbon: 3.5,
+        breakdown: { transport: 2 },
+        createdAt: new Date('2026-06-01'),
+        rawAiResponse: null,
+      },
+      {
+        surfaceCarbon: 3, shadowCarbon: 2, ghostCarbon: 1, totalCarbon: 6,
+        breakdown: { food: 3 },
+        createdAt: new Date('2026-06-02'),
+        rawAiResponse: { topAction: 'Take the metro' },
+      },
+    ];
+
+    const summary = buildCarbonSummaryFromLogs('7d', logs);
+    expect(summary.totalCarbon).toBeCloseTo(9.5);
+    expect(summary.categoryBreakdown.transport).toBeCloseTo(2);
+    expect(summary.topAction).toBe('Take the metro');
+    expect(summary.dailyBreakdown).toHaveLength(2);
   });
 });

@@ -2,44 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { auth } from '@/lib/auth';
 import { rateLimiters } from '@/lib/rate-limit';
 import { MAX_FILE_SIZE_BYTES } from '@/lib/validators';
+import { detectMimeFromMagicBytes } from '@/lib/fileUtils';
 import { parseReceipt, sanitizeFilename } from '@/services/receiptParser';
-
-/**
- * Detect actual file type from magic bytes — more reliable than browser MIME type.
- * Returns the detected MIME type or the original if unknown.
- */
-function detectMimeFromMagicBytes(buffer: Buffer, claimedMime: string): { mime: string; valid: boolean } {
-  const hex = buffer.subarray(0, 12).toString('hex');
-  const str = buffer.subarray(0, 4).toString('ascii');
-
-  // JPEG: FFD8FF
-  if (hex.startsWith('ffd8ff')) return { mime: 'image/jpeg', valid: true };
-
-  // PNG: 89504E47
-  if (hex.startsWith('89504e47')) return { mime: 'image/png', valid: true };
-
-  // PDF: %PDF
-  if (str === '%PDF') return { mime: 'application/pdf', valid: true };
-
-  // WEBP: starts with RIFF....WEBP
-  if (hex.startsWith('52494646') && buffer.subarray(8, 12).toString('ascii') === 'WEBP') {
-    return { mime: 'image/webp', valid: true };
-  }
-
-  // GIF: GIF87a or GIF89a
-  if (str.startsWith('GIF')) return { mime: 'image/gif', valid: true };
-
-  // BMP: BM
-  if (buffer.subarray(0, 2).toString('ascii') === 'BM') return { mime: 'image/bmp', valid: true };
-
-  // HEIC/HEIF: look for 'ftyp' at byte 4
-  const ftypOffset = buffer.subarray(4, 8).toString('ascii');
-  if (ftypOffset === 'ftyp') return { mime: 'image/heic', valid: true };
-
-  // Unknown — accept if claimed type looks like an image or PDF
-  const isImageOrPdf = claimedMime.startsWith('image/') || claimedMime === 'application/pdf';
-  return { mime: claimedMime, valid: isImageOrPdf };
-}
 
 /**
  * POST /api/carbon/upload

@@ -95,12 +95,7 @@ async function callVisionModel(
     const raw = response.choices[0]?.message?.content;
     if (!raw) return null;
 
-    const cleaned = raw.replace(/^```json?\n?/i, '').replace(/\n?```$/i, '').trim();
-    const parsed  = JSON.parse(cleaned);
-    const items: ReceiptItem[] = parsed.items ?? [];
-
-    console.info(`[ReceiptParser] ${modelId}: ${items.length} items | store=${parsed.store_name ?? '?'}`);
-    return { items, storeName: parsed.store_name ?? null };
+    return parseVisionJsonResponse(raw);
   } catch (err) {
     console.error(`[ReceiptParser] ${modelId} error:`, err);
     return null;
@@ -132,6 +127,36 @@ function itemsToText(items: ReceiptItem[], storeName?: string | null): string {
   const header = storeName ? `Store: ${storeName}\n` : '';
   const lines  = items.map(i => `- ${i.quantity}x ${i.name}: ₹${i.price.toFixed(2)} (${i.category})`);
   return `Receipt:\n${header}${lines.join('\n')}\n\nCalculate carbon footprint including manufacturing, packaging, transport, and lifecycle emissions.`;
+}
+
+/**
+ * Parse Groq vision model JSON response into receipt items.
+ *
+ * @param raw - Raw JSON string from the vision model
+ * @returns Parsed items and store name, or null when parsing fails
+ */
+export function parseVisionJsonResponse(raw: string): VisionResult | null {
+  try {
+    const cleaned = raw.replace(/^```json?\n?/i, '').replace(/\n?```$/i, '').trim();
+    const parsed  = JSON.parse(cleaned);
+    const items: ReceiptItem[] = parsed.items ?? [];
+    return { items, storeName: parsed.store_name ?? null };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Format detected receipt items into text for carbon extraction.
+ *
+ * @param items - Line items detected on the receipt
+ * @param storeName - Optional store name from OCR
+ */
+export function formatReceiptItemsForExtraction(
+  items: ReceiptItem[],
+  storeName?: string | null
+): string {
+  return itemsToText(items, storeName);
 }
 
 /**

@@ -1,8 +1,6 @@
 import NextAuth from 'next-auth';
 import Credentials from 'next-auth/providers/credentials';
-import bcryptjs from 'bcryptjs';
-import { prisma } from '@/lib/prisma';
-import { loginSchema } from '@/lib/validators';
+import { validateUserCredentials } from '@/lib/auth-utils';
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   providers: [
@@ -13,34 +11,7 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         password: { label: 'Password', type: 'password' },
       },
       async authorize(credentials) {
-        // Validate input shape
-        const parsed = loginSchema.safeParse(credentials);
-        if (!parsed.success) return null;
-
-        const { email, password } = parsed.data;
-
-        // Find user — use select to never return passwordHash anywhere else
-        const user = await prisma.user.findUnique({
-          where: { email },
-          select: {
-            id: true,
-            email: true,
-            name: true,
-            passwordHash: true,
-          },
-        });
-
-        if (!user) return null;
-
-        const passwordValid = await bcryptjs.compare(password, user.passwordHash);
-        if (!passwordValid) return null;
-
-        // Return only safe fields — passwordHash NEVER leaves this function
-        return {
-          id: user.id,
-          email: user.email,
-          name: user.name,
-        };
+        return validateUserCredentials(credentials);
       },
     }),
   ],

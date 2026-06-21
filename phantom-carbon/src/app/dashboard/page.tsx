@@ -1,6 +1,7 @@
 import { auth } from '@/lib/auth';
 import { redirect } from 'next/navigation';
 import { prisma } from '@/lib/prisma';
+import { buildCarbonSummaryFromLogs } from '@/lib/carbonUtils';
 import { Navbar } from '@/components/layout/Navbar';
 import { GhostRadar } from '@/components/dashboard/GhostRadar';
 import { ThreeLayerChart } from '@/components/dashboard/ThreeLayerChart';
@@ -8,11 +9,10 @@ import { LayerBreakdownCard } from '@/components/dashboard/LayerBreakdownCard';
 import { DailyScoreCard } from '@/components/dashboard/DailyScoreCard';
 import { DashboardRefresher } from '@/components/dashboard/DashboardRefresher';
 import type { Metadata } from 'next';
-import type { CarbonSummary, CarbonBreakdown, DailyCarbon } from '@/types';
+import type { CarbonSummary } from '@/types';
 
 export const metadata: Metadata = { title: 'Dashboard' };
 
-// Direct DB query — no HTTP self-call, fully server-side
 async function getCarbonSummary(userId: string): Promise<CarbonSummary> {
   const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
@@ -30,83 +30,7 @@ async function getCarbonSummary(userId: string): Promise<CarbonSummary> {
     orderBy: { createdAt: 'asc' },
   });
 
-  if (logs.length === 0) {
-    return {
-      period: '7d',
-      totalSurface: 0,
-      totalShadow: 0,
-      totalGhost: 0,
-      totalCarbon: 0,
-      dailyBreakdown: [],
-      trend: 'stable',
-      categoryBreakdown: {},
-    };
-  }
-
-  // Aggregate totals
-  const totals = logs.reduce(
-    (acc, log) => ({
-      surface: acc.surface + log.surfaceCarbon,
-      shadow:  acc.shadow  + log.shadowCarbon,
-      ghost:   acc.ghost   + log.ghostCarbon,
-      total:   acc.total   + log.totalCarbon,
-    }),
-    { surface: 0, shadow: 0, ghost: 0, total: 0 }
-  );
-
-  // Category breakdown
-  const categoryBreakdown: CarbonBreakdown = {};
-  for (const log of logs) {
-    const bd = log.breakdown as CarbonBreakdown | null;
-    if (!bd) continue;
-    if (bd.transport)   categoryBreakdown.transport   = (categoryBreakdown.transport   ?? 0) + bd.transport;
-    if (bd.food)        categoryBreakdown.food        = (categoryBreakdown.food        ?? 0) + bd.food;
-    if (bd.energy)      categoryBreakdown.energy      = (categoryBreakdown.energy      ?? 0) + bd.energy;
-    if (bd.shopping)    categoryBreakdown.shopping    = (categoryBreakdown.shopping    ?? 0) + bd.shopping;
-    if (bd.digital)     categoryBreakdown.digital     = (categoryBreakdown.digital     ?? 0) + bd.digital;
-    if (bd.supplyChain) categoryBreakdown.supplyChain = (categoryBreakdown.supplyChain ?? 0) + bd.supplyChain;
-  }
-
-  // Daily breakdown map
-  const dailyMap = new Map<string, DailyCarbon>();
-  for (const log of logs) {
-    const dateKey = log.createdAt.toISOString().split('T')[0];
-    const existing = dailyMap.get(dateKey) ?? { date: dateKey, surface: 0, shadow: 0, ghost: 0, total: 0 };
-    dailyMap.set(dateKey, {
-      ...existing,
-      surface: existing.surface + log.surfaceCarbon,
-      shadow:  existing.shadow  + log.shadowCarbon,
-      ghost:   existing.ghost   + log.ghostCarbon,
-      total:   existing.total   + log.totalCarbon,
-    });
-  }
-  const dailyBreakdown = Array.from(dailyMap.values()).sort((a, b) => a.date.localeCompare(b.date));
-
-  // Trend: compare first vs second half
-  let trend: 'improving' | 'worsening' | 'stable' = 'stable';
-  if (dailyBreakdown.length >= 4) {
-    const mid = Math.floor(dailyBreakdown.length / 2);
-    const firstAvg  = dailyBreakdown.slice(0, mid).reduce((s, d) => s + d.total, 0) / mid;
-    const secondAvg = dailyBreakdown.slice(mid).reduce((s, d) => s + d.total, 0) / (dailyBreakdown.length - mid);
-    if (secondAvg < firstAvg * 0.95) trend = 'improving';
-    else if (secondAvg > firstAvg * 1.05) trend = 'worsening';
-  }
-
-  // Top action from latest log
-  const latest = logs[logs.length - 1];
-  const raw = latest?.rawAiResponse as { topAction?: string } | null;
-
-  return {
-    period: '7d',
-    totalSurface:  Math.round(totals.surface * 100) / 100,
-    totalShadow:   Math.round(totals.shadow  * 100) / 100,
-    totalGhost:    Math.round(totals.ghost   * 100) / 100,
-    totalCarbon:   Math.round(totals.total   * 100) / 100,
-    dailyBreakdown,
-    trend,
-    categoryBreakdown,
-    topAction: raw?.topAction,
-  };
+  return buildCarbonSummaryFromLogs('7d', logs);
 }
 
 export default async function DashboardPage() {

@@ -3,19 +3,13 @@ import { auth } from '@/lib/auth';
 import { carbonSummarySchema } from '@/lib/validators';
 import { prisma } from '@/lib/prisma';
 import { redisGet, redisSet } from '@/lib/redis';
-import { aggregateCategoryBreakdown, aggregateCarbonTotals } from '@/lib/carbonUtils';
-import type { CarbonSummary, DailyCarbon } from '@/types';
+import {
+  buildCarbonSummaryFromLogs,
+  createEmptyCarbonSummary,
+  getPeriodDays,
+} from '@/lib/carbonUtils';
 
 const CACHE_TTL = 300; // 5 minutes
-
-function getPeriodDays(period: string): number {
-  switch (period) {
-    case '7d':  return 7;
-    case '30d': return 30;
-    case '90d': return 90;
-    default:    return 7;
-  }
-}
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
   const session = await auth();
@@ -36,7 +30,6 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   const { period } = queryValidation.data;
   const cacheKey = `summary:${userId}:${period}`;
 
-  // Check Redis cache
   try {
     const cached = await redisGet(cacheKey);
     if (cached) {
@@ -63,60 +56,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
     orderBy: { createdAt: 'asc' },
   });
 
-  if (logs.length === 0) {
-    const empty: CarbonSummary = {
-      period,
-      totalSurface: 0,
-      totalShadow:  0,
-      totalGhost:   0,
-      totalCarbon:  0,
-      dailyBreakdown: [],
-      trend: 'stable',
-      categoryBreakdown: {},
-    };
-    return NextResponse.json({ data: empty });
-  }
-
-  const totals = aggregateCarbonTotals(logs);
-  const categoryBreakdown = aggregateCategoryBreakdown(logs);
-
-  const dailyMap = new Map<string, DailyCarbon>();
-  for (const log of logs) {
-    const dateKey = log.createdAt.toISOString().split('T')[0];
-    const existing = dailyMap.get(dateKey) ?? { date: dateKey, surface: 0, shadow: 0, ghost: 0, total: 0 };
-    dailyMap.set(dateKey, {
-      ...existing,
-      surface: existing.surface + log.surfaceCarbon,
-      shadow:  existing.shadow  + log.shadowCarbon,
-      ghost:   existing.ghost   + log.ghostCarbon,
-      total:   existing.total   + log.totalCarbon,
-    });
-  }
-  const dailyBreakdown = Array.from(dailyMap.values()).sort((a, b) => a.date.localeCompare(b.date));
-
-  let trend: 'improving' | 'worsening' | 'stable' = 'stable';
-  if (dailyBreakdown.length >= 4) {
-    const mid       = Math.floor(dailyBreakdown.length / 2);
-    const firstAvg  = dailyBreakdown.slice(0, mid).reduce((s, d) => s + d.total, 0) / mid;
-    const secondAvg = dailyBreakdown.slice(mid).reduce((s, d) => s + d.total, 0) / (dailyBreakdown.length - mid);
-    if (secondAvg < firstAvg * 0.95)      trend = 'improving';
-    else if (secondAvg > firstAvg * 1.05) trend = 'worsening';
-  }
-
-  const latestLog = logs[logs.length - 1];
-  const rawResponse = latestLog?.rawAiResponse as { topAction?: string } | null;
-
-  const summary: CarbonSummary = {
-    period,
-    totalSurface:  Math.round(totals.surface * 100) / 100,
-    totalShadow:   Math.round(totals.shadow  * 100) / 100,
-    totalGhost:    Math.round(totals.ghost   * 100) / 100,
-    totalCarbon:   Math.round(totals.total   * 100) / 100,
-    dailyBreakdown,
-    trend,
-    categoryBreakdown,
-    topAction: rawResponse?.topAction,
-  };
+  const summary = logs.length === 0
+    ? createEmptyCarbonSummary(period)
+    : buildCarbonSummaryFromLogs(period, logs);
 
   try {
     await redisSet(cacheKey, JSON.stringify(summary), CACHE_TTL);

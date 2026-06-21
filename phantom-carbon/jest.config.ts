@@ -38,9 +38,10 @@ const config: Config = {
   // that require mocking for full coverage
   coverageThreshold: {
     global: {
-      lines:     65,
-      functions: 60,
-      branches:  45,
+      lines:     75,
+      functions: 70,
+      branches:  55,
+      statements: 73,
     },
   },
 };
