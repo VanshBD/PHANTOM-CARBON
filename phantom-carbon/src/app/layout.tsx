@@ -18,6 +18,13 @@ export const metadata: Metadata = {
   keywords: ['carbon footprint', 'CO2', 'sustainability', 'AI', 'climate', 'emissions tracking'],
   authors: [{ name: 'Phantom Carbon Team' }],
   manifest: '/manifest.json',
+  icons: {
+    icon: [
+      { url: '/favicon.svg', type: 'image/svg+xml' },
+    ],
+    apple: '/favicon.svg',
+    shortcut: '/favicon.svg',
+  },
   openGraph: {
     type: 'website',
     title: 'Phantom Carbon — Invisible Carbon Intelligence',
